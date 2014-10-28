@@ -1,0 +1,24 @@
+This work was packaged for Debian by:
+
+    Stephan Gorget <stephan.gorget@edf.fr> on Fri, 23 Sep 2011 10:57:14 +0200
+
+Upstream Author(s):
+
+    mathieu.hautreux@cea.fr
+
+Copyright:
+
+    <Copyright (C) Mathieu Hautreux>
+
+License:
+
+It is licensed under the GPL version 3,
+see "/usr/share/common-licenses/GPL-3".
+
+The Debian packaging is:
+
+    Copyright (C) 2011 Stephan Gorget <stephan.gorget@edf.fr>
+
+and is licensed under the GPL version 3,
+see "/usr/share/common-licenses/GPL-3".
+

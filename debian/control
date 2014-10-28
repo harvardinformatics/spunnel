@@ -1,0 +1,14 @@
+Source: slurm-llnl-spank-plugin-x11
+Section: libs
+Priority: extra
+Maintainer: Stephan Gorget <stephan.gorget@edf.fr>
+Build-Depends: libslurm-dev, debhelper (>= 7)
+Standards-Version: 3.9.1
+
+Package: slurm-llnl-spank-plugin-x11
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, slurm-llnl-spank-plugin
+Description: Slurm spank plugin for X11 display support
+ x11 SLURM spank plugin enables to export X11 display on a part or all of the
+ allocated nodes using openSSH.
+ If openSSH is properly configured, users can use this feature transparently,

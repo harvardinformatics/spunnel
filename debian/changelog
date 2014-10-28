@@ -1,0 +1,11 @@
+slurm-llnl-spank-plugin-x11 (2.3.3+edf+1) unstable; urgency=low
+
+  * New release 2.3.3
+
+ -- Stephan Gorget <stephan.gorget@edf.fr>  Thu, 22 Mar 2012 15:37:44 +0100
+
+slurm-llnl-spank-plugin-x11 (2.2.1+edf+1) unstable; urgency=low
+
+  * Initial release (Closes: #179)
+
+ -- Stephan Gorget <stephan.gorget@edf.fr>  Fri, 23 Sep 2011 10:57:14 +0200
