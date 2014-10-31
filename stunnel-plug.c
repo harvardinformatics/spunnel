@@ -74,7 +74,7 @@ static int _tunnel_opt_process (int val, const char *optarg, int remote);
 struct spank_option spank_opts[] =
 {
         { "tunnel", "<submit port:exec port[,submit port:exec port,...]>",
-                "Forward exec host port to submit host port via ssh -L", 1, '',
+                "Forward exec host port to submit host port via ssh -L", 1, 0,
                 (spank_opt_cb_f) _tunnel_opt_process
         },
         SPANK_OPTIONS_TABLE_END
@@ -88,8 +88,10 @@ struct spank_option spank_opts[] =
  */
 int slurm_spank_init (spank_t sp, int ac, char *av[])
 {
+    printf("spank init start\n");
     spank_option_register(sp,spank_opts);
     _stunnel_init_config(sp,ac,av);
+    printf("spank init end\n");
 
     return 0;
 }
@@ -99,11 +101,28 @@ int slurm_spank_init (spank_t sp, int ac, char *av[])
  */
 int slurm_spank_local_user_init (spank_t sp, int ac, char **av)
 {
+    printf("spank local user init start\n");
+
+    /* If there are no ssh args, then there is nothing to do */
+    if (ssh_args == NULL){
+        goto exit;
+    }
+    if (strstr(ssh_args,"-L") == NULL){
+        goto exit;
+    }
+
     int status;
 
+    uint32_t jobid;
     job_info_msg_t * job_buffer_ptr;
     job_info_t* job_ptr;
 
+    /* get job id */
+    if ( spank_get_item (sp, S_JOB_ID, &jobid)
+         != ESPANK_SUCCESS ) {
+        status = -1;
+        goto exit;
+    }
 
     /* get job infos */
     status = slurm_load_job(&job_buffer_ptr,jobid,SHOW_ALL);
@@ -130,6 +149,7 @@ int slurm_spank_local_user_init (spank_t sp, int ac, char **av)
 
     /* connect required nodes */
     status = _stunnel_connect_nodes(job_ptr->nodes);
+    printf("spank local user init start\n");
 
     clean_exit:
     slurm_free_job_info_msg(job_buffer_ptr);
@@ -146,6 +166,7 @@ int slurm_spank_local_user_init (spank_t sp, int ac, char **av)
  */
 int slurm_spank_exit (spank_t sp, int ac, char **av)
 {
+    printf("spank exit start\n");
     uid_t uid;
 
     char* expc_cmd;
@@ -178,31 +199,37 @@ int slurm_spank_exit (spank_t sp, int ac, char **av)
     }
     if ( expc_cmd != NULL )
         free(expc_cmd);
+    printf("spank exit end\n");
 
     return 0;
 }
 
 static int _tunnel_opt_process (int val, const char *optarg, int remote)
 {
-    if (optarg == NULL) {
-        ERROR ("--tunnel requires an argument, e.g. 8888:8888");
-        return (0);
-    }
-
-    printf("portlist %s",optarg);
+    printf("tunnel opt process start %d %d %s\n",val,remote,optarg);
+//    if (optarg == NULL) {
+//        ERROR ("--tunnel requires an argument, e.g. 8888:8888");
+//        return (0);
+//    }
+    
+    printf("Gonna dup optarg %s\n",optarg);
+    char *portlist = strdup(optarg);
+    printf("portlist %s\n",portlist);
     int portpaircount = 1;
     int i = 0;
-    for (i=0; i < strlen(optarg); i++){
-        if (optarg[i] == ','){
+    for (i=0; i < strlen(portlist); i++){
+        if (portlist[i] == ','){
             portpaircount++;
         }
     }
+    printf("portpair count %d\n",portpaircount);
     //Break up the string by comma to get the list of port pairs
     char **portpairs = malloc(portpaircount * sizeof(char*));
     char *ptr;
 
-    char *token  = strtok_r(optarg,",",&ptr);
+    char *token  = strtok_r(portlist,",",&ptr);
     int numpairs = 0;
+    printf("token is %s\n",token);
     while (token != NULL){
         portpairs[numpairs] = strdup(token);
         token = strtok_r(NULL,",",&ptr);
@@ -212,13 +239,23 @@ static int _tunnel_opt_process (int val, const char *optarg, int remote)
     char *second;
     char *p;
     //Go through the port pairs and create the switch string
+    printf("numpairs is %d\n",numpairs);
+    if (numpairs == 0){
+        return (0);
+    }
+    if (ssh_args == NULL){
+        ssh_args = (char *)malloc(1024 * sizeof(char));
+    }
     for (i=0; i<numpairs; i++){
         first = strtok_r(portpairs[i],":",&ptr);
         second = strtok_r(NULL,":",&ptr);
-        INFO("portpairs is %s first is %s, second is %s\n",portpairs[i],first,second);
+        printf("portpairs is %s first is %s, second is %s\n",portpairs[i],first,second);
         p = strdup(ssh_args);
         snprintf(ssh_args,256," %s -L %s:localhost:%s ",p,first,second);
+        
     }
+    printf("ssh_args is %s\n",ssh_args);
+    printf("tunnel opt process end \n");
 
     return (0);
 }
@@ -226,18 +263,20 @@ static int _tunnel_opt_process (int val, const char *optarg, int remote)
 /** This does the actual port forward **/
 int _connect_node (char* node)
 {
+    printf("connect node start \n");
     int status = -1;
 
-    char forward[256];
     char* expc_cmd;
     size_t expc_length;
 
+    printf("Gonna get expc length\n");
     /* sshcmd is already set */
-    expc_length = strlen(node) + 200 + strlen(ssh_cmd)  +
-            strlen((ssh_args == NULL) ? DEFAULT_SSH_ARGS : ssh_args) ;
+    expc_length = strlen(node) + 200;// + strlen(ssh_cmd)  + strlen((ssh_args == NULL) ? DEFAULT_SSH_ARGS : ssh_args) ;
+    printf("Gonna malloc %d",expc_length);
     expc_cmd = (char*) malloc(expc_length*sizeof(char));
     if ( expc_cmd != NULL ) {
         snprintf(expc_cmd,expc_length,"%s %s %s -f -N",ssh_cmd,node,ssh_args);
+        printf("Command is %s",expc_cmd);
         INFO("tunnel: interactive mode : executing %s",expc_cmd);
         status = system(expc_cmd);
         if ( status == -1 )
@@ -248,11 +287,14 @@ int _connect_node (char* node)
         free(expc_cmd);
     }
 
+    printf("connect node end \n");
     return status;
 }
 
 int _stunnel_connect_nodes (char* nodes)
 {
+    printf("connect nodes start \n");
+
     char* host;
     hostlist_t hlist;
     int n=0;
@@ -261,15 +303,17 @@ int _stunnel_connect_nodes (char* nodes)
     /* Connect to the first host in the list */
     hlist = slurm_hostlist_create(nodes);
     host = slurm_hostlist_shift(hlist);
-    _connect_node(host,jobid,stepid);
+    _connect_node(host);
     slurm_hostlist_destroy(hlist);
 
+    printf("connect nodes end\n");
     return 0;
 }
 
 
 int _stunnel_init_config(spank_t sp, int ac, char *av[])
 {
+    printf("init config start \n");
     int i;
     char* elt;
     char* p;
@@ -298,6 +342,10 @@ int _stunnel_init_config(spank_t sp, int ac, char *av[])
     }
 
     /* If ssh_cmd is not set, then set it to default */
+    if (ssh_cmd == NULL){
+        ssh_cmd = "ssh";
+    }
+    printf("init config end \n");
 
 
 }
