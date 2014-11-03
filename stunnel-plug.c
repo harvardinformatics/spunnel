@@ -394,32 +394,13 @@ int _connect_node (char* node)
         //INFO("tunnel: interactive mode : executing %s",expc_cmd);
 
 
-        pid_t childPID;
-        int var_lcl = 0;
-
-        childPID = fork();
-
-        if(childPID >= 0) // fork was successful
-        {
-            if(childPID == 0) // child process
-            {
-                status = system(expc_cmd);
-                if ( status == -1 )
-                    ERROR("tunnel: unable to connect node %s with command %s",node,expc_cmd);
-                else {
-                    // Write the hostname to a file
-                    write_host_file(node);
-                }
-                free(expc_cmd);
-                exit(0);
-            }
+        status = system(expc_cmd);
+        if ( status == -1 )
+              ERROR("tunnel: unable to connect node %s with command %s",node,expc_cmd);
+        else {
+              // Write the hostname to a file
+              write_host_file(node);
         }
-        else // fork failed
-        {
-            printf("tunnel: Unable to launch ssh process\n");
-            return 1;
-        }
-        
         free(expc_cmd);
     }
 
