@@ -1,5 +1,4 @@
 .project
 .cproject
 *.o
-stunnel
-stunnel-plug.so
+stunnel.so
