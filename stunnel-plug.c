@@ -38,6 +38,10 @@
 
 #include <stdint.h>
 
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <errno.h>
+
 #include <slurm/slurm.h>
 #include <slurm/spank.h>
 
@@ -85,6 +89,37 @@ static int exit_call = 0;
  * All spank plugins must define this macro for the SLURM plugin loader.
  */
 SPANK_PLUGIN(spunnel, 1);
+
+/*
+ * Returns 1 if port is free, 0 otherwise
+ *
+ */
+int port_available(int port)
+{
+    int result = 1;
+
+    struct sockaddr_in serv_addr;
+    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if( sockfd < 0 ) {
+        fprintf(stderr,"Error getting socket for port check.\n");
+        return 0;
+    } 
+
+    bzero((char *) &serv_addr, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = INADDR_ANY;
+    serv_addr.sin_port = htons(port);
+    int bindresult = bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr));
+    if (bindresult  < 0) {
+        result = 0;
+    }
+
+    if (close (sockfd) < 0 ) {
+        fprintf(stderr,"Close of socket during port test failed?? fd: %s\n", strerror(errno));
+        result = 0;
+    }
+    return result;
+}
 
 int file_exists(char *filename){
     struct stat buf;
@@ -141,6 +176,7 @@ int read_host_file(char *buf)
         line[strlen(line) - 1] = '\0';
     }
     snprintf(buf,100,"%s",line);
+    fclose(file);
     return 0;
 }
 
@@ -286,7 +322,7 @@ int slurm_spank_exit (spank_t sp, int ac, char **av){
         else {
             status = system(expc_cmd);
             if ( status == -1 ) {
-                ERROR("tunnel: unable to exec kill cmd %s",expc_cmd);
+                fprintf(stderr,"tunnel: unable to exec kill cmd %s",expc_cmd);
             }
         }
     
@@ -344,6 +380,7 @@ static int _tunnel_opt_process (int val, const char *optarg, int remote)
         token = strtok_r(NULL,",",&ptr);
         numpairs++;
     }
+    free(portlist);
 
     //Go through the port pairs and create the switch string
     int first;
@@ -368,6 +405,9 @@ static int _tunnel_opt_process (int val, const char *optarg, int remote)
 
         first = atoi(firststr);
         second = atoi(secondstr);
+
+        free(portpairs[i]);
+
         if (first == 0 || second == 0){
             fprintf(stderr,"--tunnel parameter requires two numeric ports separated by a colon\n");
             free(portpairs);
@@ -378,10 +418,17 @@ static int _tunnel_opt_process (int val, const char *optarg, int remote)
             free(portpairs);
             exit(1);
         }
+
+        if (!port_available(first)){
+            fprintf(stderr,"port %d is in use or unavailable\n",first);
+            free(portpairs);
+            exit(1);
+        }
         //printf("portpairs is %s first is %d, second is %d\n",portpairs[i],first,second);
         p = strdup(args);
         snprintf(args,256," %s -L %d:localhost:%d ",p,first,second);
         free(portpairs); 
+        free(p);
     }
     //printf("args is %s\n",args);
     //printf("tunnel opt process end \n");
@@ -423,6 +470,9 @@ int _connect_node (char* node)
               write_host_file(node);
         }
         free(expc_cmd);
+    }
+    if (args != NULL){
+        free(args);
     }
 
     return status;
