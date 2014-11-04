@@ -1,31 +1,31 @@
 /***************************************************************************\
- i stunnel.c - SLURM SPANK TUNNEL plugin
+ spunnel.c - SLURM SPANK TUNNEL plugin
  ***************************************************************************
  * Copyright  Harvard University (2014)
  *
  * Written by Aaron Kitzmiller <aaron_kitzmiller@harvard.edu> based on
  * X11 SPANK by Matthieu Hautreux <matthieu.hautreux@cea.fr>
  *
- * This file is part of stunnel, a SLURM SPANK Plugin aiming at
+ * This file is part of spunnel, a SLURM SPANK Plugin aiming at
  * providing arbitrary port forwarding on SLURM execution
  * nodes using OpenSSH.
  *
- * stunnel is free software; you can redistribute it and/or modify
+ * spunnel is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by the 
  * Free Software Foundation; either version 2 of the License, or (at your 
  * option) any later version.
  *
- * stunnel is distributed in the hope that it will be useful, but
+ * spunnel is distributed in the hope that it will be useful, but
  * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
  * or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License 
  * for more details.
  *
  * You should have received a copy of the GNU General Public License along
- * with stunnel; if not, write to the Free Software Foundation, Inc.,
+ * with spunnel; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  *
 \***************************************************************************/
-/* Note: To compile: gcc -fPIC -shared -o stunnel stunnel-plug.c */
+/* Note: To compile: gcc -fPIC -shared -o spunnel spunnel-plug.c */
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -42,7 +42,7 @@
 #include <slurm/spank.h>
 
 
-#define STUNNEL_ENVVAR         "SLURM_STUNNEL"
+#define SPUNNEL_ENVVAR         "SLURM_SPUNNEL"
 
 #define INFO  slurm_debug
 #define DEBUG slurm_debug
@@ -64,17 +64,36 @@ static int exit_call = 0;
 #define DEFAULT_SSH_CMD "ssh"
 #define DEFAULT_ARGS ""
 
-#define HOST_FILE_PATTERN "/tmp/%s-host.tunnel"
-#define CONTROL_FILE_PATTERN "/tmp/%s-control.tunnel"
-#define EXIT_FLAG_PATTERN "/tmp/%s-exitflag.tunnel"
+/*
+ * string pattern for file that stores the remote hostname needed for the ssh
+ * control commands
+ */
+#define HOST_FILE_PATTERN       "/tmp/%s-host.tunnel"
+
+/*
+ * string pattern for file used as the ssh control master file
+ */
+#define CONTROL_FILE_PATTERN    "/tmp/%s-control.tunnel"
+
+/*
+ * string pattern for file used to indicate that slurm_spank_exit has
+ * already been run
+ */
+#define EXIT_FLAG_PATTERN       "/tmp/%s-exitflag.tunnel"
 
 /*
  * All spank plugins must define this macro for the SLURM plugin loader.
  */
-SPANK_PLUGIN(stunnel, 1);
+SPANK_PLUGIN(spunnel, 1);
 
+int file_exists(char *filename){
+    struct stat buf;
+    return (stat(filename,&buf) == 0);
+}
 
-
+/*
+ * Writes the file that records the hostname
+ */
 int write_host_file(char *host)
 {
     FILE* file;
@@ -152,7 +171,7 @@ struct spank_option spank_opts[] =
 int slurm_spank_init (spank_t sp, int ac, char *av[])
 {
     spank_option_register(sp,spank_opts);
-    _stunnel_init_config(sp,ac,av);
+    _spunnel_init_config(sp,ac,av);
 
     return 0;
 }
@@ -164,7 +183,6 @@ int slurm_spank_local_user_init (spank_t sp, int ac, char **av)
 {
 
     /* noting to do in remote mode */
-    spank_context_t context = spank_context();
     if (spank_remote (sp))
         return 0;
 
@@ -192,14 +210,14 @@ int slurm_spank_local_user_init (spank_t sp, int ac, char **av)
     /* get job infos */
     status = slurm_load_job(&job_buffer_ptr,jobid,SHOW_ALL);
     if ( status != 0 ) {
-        ERROR("stunnel: unable to get job infos");
+        ERROR("spunnel: unable to get job infos");
         status = -3;
         goto exit;
     }
 
     /* check infos validity  */
     if ( job_buffer_ptr->record_count != 1 ) {
-        ERROR("stunnel: job infos are invalid");
+        ERROR("spunnel: job infos are invalid");
         status = -4;
         goto clean_exit;
     }
@@ -207,13 +225,13 @@ int slurm_spank_local_user_init (spank_t sp, int ac, char **av)
 
     /* check allocated nodes var */
     if ( job_ptr->nodes == NULL ) {
-        ERROR("stunnel: job has no allocated nodes defined");
+        ERROR("spunnel: job has no allocated nodes defined");
         status = -5;
         goto clean_exit;
     }
 
     /* connect required nodes */
-    status = _stunnel_connect_nodes(job_ptr->nodes);
+    status = _spunnel_connect_nodes(job_ptr->nodes);
 
     clean_exit:
     slurm_free_job_info_msg(job_buffer_ptr);
@@ -231,19 +249,18 @@ int slurm_spank_exit (spank_t sp, int ac, char **av){
         exit(1);
     }
 
-    struct stat buf;
-    if (stat(exitflag,&buf) == 0){
+    if (file_exists(exitflag)){
         char* expc_cmd;
         char* expc_pattern = "ssh %s -S %s -O exit >/dev/null 2>&1";
         size_t expc_length;
     
         int status = -1;
     
-    
+        /* Read the host file so the ssh command has a host */
         char host[1000];
         read_host_file(host);
         if (strcmp(host, "") == 0){
-            printf("empty host file");
+            fprintf(stderr,"empty host file");
             return 0;
         }
         
@@ -254,10 +271,10 @@ int slurm_spank_exit (spank_t sp, int ac, char **av){
         }
     
         /* If the control file isn't there, don't do anything */
-        //struct stat buf;
-        if (stat(controlfile,&buf) != 0){
+        if (!file_exists(controlfile)){
             return 0;
         }
+
         /* remove background ssh tunnels */
         expc_length = strlen(expc_pattern) + 128 ;
         expc_cmd = (char*) malloc(expc_length*sizeof(char));
@@ -293,7 +310,10 @@ int slurm_spank_exit (spank_t sp, int ac, char **av){
 }
 
 
-
+/*
+ * Uses the contents of the --tunnel option to create args string consisting of
+ * -L <submit host>:localhost:<exec host>.  There may be multiple -L options.
+ */
 static int _tunnel_opt_process (int val, const char *optarg, int remote)
 {
     if (optarg == NULL) {
@@ -378,6 +398,7 @@ int _connect_node (char* node)
     size_t expc_length;
 
    
+    /* Setup the control file name */
     char controlfile[1024]; 
     char *user = getenv("USER");
     if (snprintf(controlfile,1024,CONTROL_FILE_PATTERN,user) > 1024){
@@ -385,14 +406,14 @@ int _connect_node (char* node)
         exit(1);
     }
 
+    /* If this control file already exists on this submit host, bail out */
+
+
     /* sshcmd is already set */
-    expc_length = strlen(node) + 200;// + strlen(ssh_cmd)  + strlen((ssh_args == NULL) ? DEFAULT_SSH_ARGS : ssh_args) ;
+    expc_length = strlen(node) + strlen(ssh_cmd)  + strlen(args) + strlen(controlfile) + 20;
     expc_cmd = (char*) malloc(expc_length*sizeof(char));
     if ( expc_cmd != NULL ) {
-        snprintf(expc_cmd,expc_length,"(%s %s %s -f -N -M -S %s)",ssh_cmd,node,args,controlfile);
-        //printf("Command is %s\n",expc_cmd);
-        //INFO("tunnel: interactive mode : executing %s",expc_cmd);
-
+        snprintf(expc_cmd,expc_length,"%s %s %s -f -N -M -S %s",ssh_cmd,node,args,controlfile);
 
         status = system(expc_cmd);
         if ( status == -1 )
@@ -407,7 +428,7 @@ int _connect_node (char* node)
     return status;
 }
 
-int _stunnel_connect_nodes (char* nodes)
+int _spunnel_connect_nodes (char* nodes)
 {
 
     char* host;
@@ -425,7 +446,7 @@ int _stunnel_connect_nodes (char* nodes)
 }
 
 
-int _stunnel_init_config(spank_t sp, int ac, char *av[])
+int _spunnel_init_config(spank_t sp, int ac, char *av[])
 {
     int i;
     char* elt;
@@ -458,6 +479,4 @@ int _stunnel_init_config(spank_t sp, int ac, char *av[])
     if (ssh_cmd == NULL){
         ssh_cmd = "ssh";
     }
-
-
 }
