@@ -186,7 +186,7 @@ int read_host_file(char *buf)
     }
     snprintf(buf,100,"%s",line);
     fclose(file);
-    unlink(file);
+    unlink(filename);
     return 0;
 }
 
