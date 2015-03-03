@@ -1,4 +1,4 @@
-AC_INIT([spunnel],[0.5],[aaron_kitzmiller@harvard.edu])
+AC_INIT([spunnel],[14.11.0],[aaron_kitzmiller@harvard.edu])
 AC_CONFIG_AUX_DIR(config)
 AC_CONFIG_MACRO_DIR([m4])
 

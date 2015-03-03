@@ -56,7 +56,6 @@
 static char* ssh_cmd = NULL;
 static char* args = NULL;
 
-static int exit_call = 0;
 
 /* 
  * can be used to adapt the ssh parameters to use to 
@@ -155,6 +154,7 @@ int write_host_file(char *host)
 
     fprintf(file,"%s\n",host);
     fclose(file);
+    return 0;
 }
 
 /*
@@ -174,13 +174,15 @@ int read_host_file(char *buf)
     }
     file = fopen(filename,"r");
     if ( file == NULL ) {
-        fprintf(stderr,"tunnel: unable to read file %s. You may need to manually kill ssh tunnel processes.\n", filename);
+        // fprintf(stderr,"tunnel: unable to read file %s. You may need to manually kill ssh tunnel processes.\n", filename);
         return 30;
     }
    
     //Read the lines of the host file 
     char line[100]; 
-    fgets(line,100,file);
+    if (fgets(line,100,file) == NULL) {
+        fprintf(stderr,"Unable to read from file %s\n",filename);
+    }
     if (line[strlen(line) - 1] == '\n') {
         line[strlen(line) - 1] = '\0';
     }
@@ -211,6 +213,8 @@ struct spank_option spank_opts[] =
  * This is used to process any options in the config file
  *
  */
+void _spunnel_init_config(spank_t sp, int ac, char *av[]);
+
 int slurm_spank_init (spank_t sp, int ac, char *av[])
 {
     spank_option_register(sp,spank_opts);
@@ -219,6 +223,72 @@ int slurm_spank_init (spank_t sp, int ac, char *av[])
     return 0;
 }
 
+/*
+ * This does the actual port forward.  An ssh control master file is used
+ * when the connection is established so that it can be terminated later.
+ */
+int _connect_node (char* node)
+{
+    int status = -1;
+
+    char* expc_cmd;
+    size_t expc_length;
+
+   
+    // Setup the control file name
+    char controlfile[1024]; 
+    char *user = getenv("USER");
+    if (snprintf(controlfile,1024,CONTROL_FILE_PATTERN,user) > 1024){
+        fprintf(stderr,"Unable to construct control file name; too big\n");
+        exit(1);
+    }
+
+    // If this control file already exists on this submit host, bail out
+    if (file_exists(controlfile)) {
+        fprintf(stderr,"ssh control file %s already exists.  Either you already have a tunnel in place, or one did not terminate correctly.  Please remove this file.\n", controlfile);
+        exit(1);
+    }
+
+
+    // sshcmd is already set
+    expc_length = strlen(node) + strlen(ssh_cmd)  + strlen(args) + strlen(controlfile) + 20;
+    expc_cmd = (char*) malloc(expc_length*sizeof(char));
+    if ( expc_cmd != NULL ) {
+        snprintf(expc_cmd,expc_length,"%s %s %s -f -N -M -S %s",ssh_cmd,node,args,controlfile);
+        status = system(expc_cmd);
+        if ( status == -1 )
+              ERROR("tunnel: unable to connect node %s with command %s",node,expc_cmd);
+        else {
+              // Write the hostname to a file
+              write_host_file(node);
+        }
+        free(expc_cmd);
+    }
+    if (args != NULL){
+        free(args);
+    }
+
+    return status;
+}
+
+/*
+ * Takes the first of the allocated nodes and passes to _connect_node
+ *
+ */
+int _spunnel_connect_nodes (char* nodes)
+{
+
+    char* host;
+    hostlist_t hlist;
+
+    // Connect to the first host in the list
+    hlist = slurm_hostlist_create(nodes);
+    host = slurm_hostlist_shift(hlist);
+    _connect_node(host);
+    slurm_hostlist_destroy(hlist);
+
+    return 0;
+}
 /*
  * This calls the functions that actually generate the ssh tunnel (_spunnel_connect_nodes, _connect_node)
  *
@@ -238,7 +308,7 @@ int slurm_spank_local_user_init (spank_t sp, int ac, char **av)
         goto exit;
     }
 
-    int status;
+    int status = 0;
 
     uint32_t jobid;
     job_info_msg_t * job_buffer_ptr;
@@ -298,71 +368,51 @@ int slurm_spank_local_user_init (spank_t sp, int ac, char **av)
  *
  */
 int slurm_spank_exit (spank_t sp, int ac, char **av){
+    char* expc_cmd;
+    char* expc_pattern = "ssh %s -S %s -O exit >/dev/null 2>&1";
+    size_t expc_length;
 
-    char exitflag[1024];
-    if (snprintf(exitflag,1024,EXIT_FLAG_PATTERN,getenv("USER")) > 1024){
-        fprintf(stderr,"Can't construct exit flag file name; too big");
-        exit(1);
+    int status = -1;
+
+    // Read the host file so the ssh command has a host
+    char host[1000];
+    read_host_file(host);
+    if (strcmp(host, "") == 0){
+        fprintf(stderr,"empty host file\n");
+        return 0;
+    }
+    
+    char *user = getenv("USER");
+    char controlfile[1024];
+    if (snprintf(controlfile,1024,CONTROL_FILE_PATTERN,user) > 1024){
+        fprintf(stderr,"Can't construct control file name; it's too big.");
     }
 
-    if (file_exists(exitflag)){
-        char* expc_cmd;
-        char* expc_pattern = "ssh %s -S %s -O exit >/dev/null 2>&1";
-        size_t expc_length;
-    
-        int status = -1;
-    
-        // Read the host file so the ssh command has a host
-        char host[1000];
-        read_host_file(host);
-        if (strcmp(host, "") == 0){
-            fprintf(stderr,"empty host file");
-            return 0;
-        }
-        
-        char *user = getenv("USER");
-        char controlfile[1024];
-        if (snprintf(controlfile,1024,CONTROL_FILE_PATTERN,user) > 1024){
-            fprintf(stderr,"Can't construct control file name; it's too big.");
-        }
-    
-        // If the control file isn't there, don't do anything
-        if (!file_exists(controlfile)){
-            return 0;
-        }
+    // If the control file isn't there, don't do anything
+    if (!file_exists(controlfile)){
+        fprintf(stderr,"Control file %s does not exist\n",controlfile);
+        return 0;
+    }
 
-        // remove background ssh tunnels
-        expc_length = strlen(expc_pattern) + 128 ;
-        expc_cmd = (char*) malloc(expc_length*sizeof(char));
-        if ( expc_cmd != NULL &&
-                ( snprintf(expc_cmd,expc_length,expc_pattern,host,controlfile)
-                        >= expc_length )	) {
-            ERROR("tunnel: error while creating kill cmd");
-        }
-        else {
-            status = system(expc_cmd);
-            if ( status == -1 ) {
-                fprintf(stderr,"tunnel: unable to exec kill cmd %s",expc_cmd);
-            }
-        }
-    
-        // remove the exit flag file
-        unlink(exitflag);
-       
-       if ( expc_cmd != NULL )
-           free(expc_cmd);
-    } 
+    // remove background ssh tunnels
+    expc_length = strlen(expc_pattern) + 128 ;
+    expc_cmd = (char*) malloc(expc_length*sizeof(char));
+    if ( expc_cmd != NULL &&
+            ( snprintf(expc_cmd,expc_length,expc_pattern,host,controlfile)
+                    >= expc_length )	) {
+        ERROR("tunnel: error while creating kill cmd");
+    }
     else {
-        FILE *fp;
-    
-        fp = fopen(exitflag,"w");
-        if ( fp == NULL ) {
-            fprintf(stderr,"tunnel: unable to read file %s. You may need to manually kill ssh tunnel processes.\n", exitflag);
-            return 3;
+        status = system(expc_cmd);
+        if ( status == -1 ) {
+            fprintf(stderr,"tunnel: unable to exec kill cmd %s",expc_cmd);
         }
-        fprintf(fp,".\n");
-        fclose(fp);
     }
+
+   
+   if ( expc_cmd != NULL )
+       free(expc_cmd);
+    return 0;
 }
 
 
@@ -407,7 +457,7 @@ static int _tunnel_opt_process (int val, const char *optarg, int remote)
         return (0);
     }
     if (args == NULL){
-        args = (char *)malloc(1024 * sizeof(char));
+        args = (char *)calloc(1024, sizeof(char));
     }
     for (i=0; i<numpairs; i++){
         char *firststr = strtok_r(portpairs[i],":",&ptr);
@@ -449,80 +499,11 @@ static int _tunnel_opt_process (int val, const char *optarg, int remote)
     return (0);
 }
 
-/*
- * This does the actual port forward.  An ssh control master file is used
- * when the connection is established so that it can be terminated later.
- */
-int _connect_node (char* node)
-{
-    int status = -1;
-
-    char* expc_cmd;
-    size_t expc_length;
-
-   
-    // Setup the control file name
-    char controlfile[1024]; 
-    char *user = getenv("USER");
-    if (snprintf(controlfile,1024,CONTROL_FILE_PATTERN,user) > 1024){
-        fprintf(stderr,"Unable to construct control file name; too big\n");
-        exit(1);
-    }
-
-    // If this control file already exists on this submit host, bail out
-    if (file_exists(controlfile)) {
-        fprintf(stderr,"ssh control file %s already exists.  Either you already have a tunnel in place, or one did not terminate correctly.  Please remove this file.\n", controlfile);
-        exit(1);
-    }
-
-
-    // sshcmd is already set
-    expc_length = strlen(node) + strlen(ssh_cmd)  + strlen(args) + strlen(controlfile) + 20;
-    expc_cmd = (char*) malloc(expc_length*sizeof(char));
-    if ( expc_cmd != NULL ) {
-        snprintf(expc_cmd,expc_length,"%s %s %s -f -N -M -S %s",ssh_cmd,node,args,controlfile);
-
-        status = system(expc_cmd);
-        if ( status == -1 )
-              ERROR("tunnel: unable to connect node %s with command %s",node,expc_cmd);
-        else {
-              // Write the hostname to a file
-              write_host_file(node);
-        }
-        free(expc_cmd);
-    }
-    if (args != NULL){
-        free(args);
-    }
-
-    return status;
-}
-
-/*
- * Takes the first of the allocated nodes and passes to _connect_node
- *
- */
-int _spunnel_connect_nodes (char* nodes)
-{
-
-    char* host;
-    hostlist_t hlist;
-    int n=0;
-    int i;
-
-    // Connect to the first host in the list
-    hlist = slurm_hostlist_create(nodes);
-    host = slurm_hostlist_shift(hlist);
-    _connect_node(host);
-    slurm_hostlist_destroy(hlist);
-
-    return 0;
-}
 
 /*
  * Process any options on the plugstack.conf line
  */
-int _spunnel_init_config(spank_t sp, int ac, char *av[])
+void _spunnel_init_config(spank_t sp, int ac, char *av[])
 {
     int i;
     char* elt;
@@ -555,4 +536,5 @@ int _spunnel_init_config(spank_t sp, int ac, char *av[])
     if (ssh_cmd == NULL){
         ssh_cmd = "ssh";
     }
+
 }
