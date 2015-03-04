@@ -1,6 +1,6 @@
 Summary: Slurm spank plugin for arbitrary port forwarding support
 Name: spunnel
-Version: 14.11.0
+Version: 14.11.1
 Release: 1 
 License: GPL
 Group: System Environment/Base
