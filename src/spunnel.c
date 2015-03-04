@@ -378,7 +378,7 @@ int slurm_spank_exit (spank_t sp, int ac, char **av){
     char host[1000];
     read_host_file(host);
     if (strcmp(host, "") == 0){
-        fprintf(stderr,"empty host file\n");
+        //fprintf(stderr,"empty host file\n");
         return 0;
     }
     
@@ -390,7 +390,7 @@ int slurm_spank_exit (spank_t sp, int ac, char **av){
 
     // If the control file isn't there, don't do anything
     if (!file_exists(controlfile)){
-        fprintf(stderr,"Control file %s does not exist\n",controlfile);
+        //fprintf(stderr,"Control file %s does not exist\n",controlfile);
         return 0;
     }
 
